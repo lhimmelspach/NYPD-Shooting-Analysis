@@ -1,0 +1,183 @@
+---
+title: "NYPD Statistics"
+author: "L. Himmelspach"
+date: "2024-12-02"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+I am starting by reading the data in from the url.
+Two questions of interest to explore from this data are are there seasonal patterns in shooting incidents, and which of the boroughs have historically had highest rates of shootings?
+The data is from https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic 
+It is a list of every shooting incident that has occurred in NYC since 2006 through 2023. The data includes an incident key number, the time and date the shooting incident occurred, the borough of the incident, the precinct, victim's age, gender, and race, as well as the coordinates of the shooting.
+```{r}
+# Install the tidyverse, plotly, dplyr, caret and ggplot2 packages if not already installed
+if(!require("tidyverse")){
+  install.packages("tidyverse")
+}
+if(!require("plotly")){
+  install.packages("plotly")
+}
+if(!require("dplyr")){
+  install.packages("dplyr")
+}
+if(!require("ggplot2")){
+  install.packages("ggplot2")
+}
+if(!require("lubridate")){
+  install.packages("lubridate")
+}
+if(!require("forecast")){
+  install.packages("forecast")
+}
+
+# Load the packages
+library(tidyverse)
+library(plotly)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(forecast)
+```
+
+```{r get_jhu_data}
+## Get data from csv file
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+```
+Start by reading in the data set.
+
+```{r import_data, message=FALSE}
+ny_shooting <- read_csv(url_in)
+```
+
+I'll be analyzing the number of shootings per date in each borough, so won't need the rest of the data.
+
+```{r tidy_data}
+#Tidy the data
+df_tidy <- ny_shooting %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))%>%
+  #Convert to date-time format
+group_by(OCCUR_DATE,BORO)%>%
+#Group by both date and borough
+  summarize(total_shootings = n())
+  #Count shootings per day
+#Explore the data
+summary(df_tidy)
+```
+
+To analyze the data a bit, we'll look at the shootings over time.
+
+```{r data_analysis}
+
+plot_ly(x = df_tidy$OCCUR_DATE,type="histogram",
+        marker = list(color="steelblue")) %>%
+  layout(title = "Number of Shooting Incidents Over Time",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Number of Incidents"))
+
+```
+
+```{r model_data}
+
+df_tidy <- df_tidy %>% mutate(OCCUR_DATE = ymd(OCCUR_DATE)) %>% 
+  #Convert to date format
+  arrange(OCCUR_DATE)
+```
+
+```{r time_series_data}
+#Create a time series object
+ts_shootings <- ts(df_tidy$total_shootings, start = c(min(year(df_tidy$OCCUR_DATE)), 1),end = c(max(year(df_tidy$OCCUR_DATE)), 12), frequency = 12)
+
+#Visualize the Time Series
+plot(ts_shootings, main = "Total Shootings Over Time", xlab = "Year", ylab = "Total Shootings")
+
+#Decompose the Time Series
+decomposed_ts <- decompose(ts_shootings)
+
+#Plot the decomposed time series
+plot(decomposed_ts)
+
+#ARIMA Model
+arima_model <- auto.arima(ts_shootings)
+
+#Print the model summary
+summary(arima_model)
+
+#Forecast using ARMIA
+forecast_arima <- forecast(arima_model, h = 12)
+
+#Plot the ARMIA forecast
+plot(forecast_arima, main = "ARMIA Forecast")
+
+#ETS Model
+ets_model <- ets(ts_shootings)
+
+#Print the model summary
+summary(ets_model)
+
+#Forecast using ETS
+forecast_ets <- forecast(ets_model, h = 12)
+
+#Plot the ETS forecast
+plot(forecast_ets, main = "ETS Forecast")
+
+
+```
+
+
+
+```{r visualize_data}
+#Calculate cumulative shootings
+df_tidy <- df_tidy %>% group_by(BORO) %>% mutate(cumulative_shootings = cumsum(total_shootings))
+```
+
+```{r cumulative_plot_data}
+#Create the cumulative plot
+fig <- plot_ly(df_tidy,x=~OCCUR_DATE,y=~cumulative_shootings,color=~BORO,type = 'scatter',mode = 'lines+markers')
+
+#Customize the plot
+fig <- fig %>% layout(title = "Cumulative Shootings in NYC by Borough Over Time",xaxis=list(title = "Date"),yaxis = list(title = "Cumulative Shootings"))
+#Display the plot
+fig
+```
+Brooklyn has had the most shootings total, and Staten Island has had least
+There looks like there is a little jump in activity in 2020
+Could be because of COVID, or possibly reaction to George Floyd's murder.
+
+This analysis only includes total shootings, it doesn't include shootings
+in terms of events per population.
+
+```{r monthly_data}
+#ensure date format is correct
+df_tidy$OCCUR_DATE <- as.Date(df_tidy$OCCUR_DATE, format = "%Y-%m-%d")
+
+#Extract month and year
+df_tidy <- df_tidy %>%
+  mutate(month = 
+month(OCCUR_DATE), year = year(OCCUR_DATE))
+
+#Group and summarize
+df_summary <- df_tidy %>% 
+  group_by(month, year) %>%
+  summarize(total_shootings = n())
+```
+
+```{r plot_monthly_data}
+#Create plot of shootings by month
+ggplot(df_summary, aes(x = month, y = total_shootings, fill = factor(year))) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Shootings by Month and Year",
+       x = "Month",
+       y = "Total Shootings") +
+  scale_x_continuous(breaks = 1:12, labels = month.abb) +
+  theme_minimal()
+```
+
+It looks like summer months have the highest rates of shootings in NYC.
+apparently the nicer weather is not enough to discourage it
+February has the least. Possibly because nobody wants to be outside
+Also possibly because there are fewer days.
+
+In conclusion, Brooklyn has had the most shootings total, and Staten Island has had least. There were also more shooting incidents on average in the summer months, and fewer in the winter.
+Possible sources of bias include reporting discrepancies, under reporting, or classification errors. 
+
